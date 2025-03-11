@@ -4,15 +4,16 @@ spec:
       options: [ 'skip', 'delete' ]
       type: string
       default: 'skip'
-    docker_builder:
-      type: boolean
-      default: false
-    helm_builder:
-      type: boolean
-      default: false
-    helm_deploy:
-      type: boolean
-      default: false
+# вот что далее думаю излишни. эти параметры можно покрывать простыми условиями
+    # docker_builder:
+    #   type: boolean
+    #   default: false
+    # helm_builder:
+    #   type: boolean
+    #   default: false
+    # helm_deploy:
+    #   type: boolean
+    #   default: false
 ---
 
 .template-variables: &template-variables
@@ -59,9 +60,12 @@ docker_builder:build:job:
   tags:
     - docker-builder
   rules:
-    - if: '"$[[ inputs.docker_builder ]]" == "true"'
-      when: always
-    - when: never
+    - *template-rules
+# на мой взгляд лишний переключатель
+    # - if: '"$[[ inputs.docker_builder ]]" == "true"'
+    #   when: always
+    # - when: never
+
 
 docker_builder:push:job:
   stage: push
@@ -77,10 +81,11 @@ docker_builder:push:job:
   tags:
     - docker-builder
   rules:
-    - *template-rules
-    - if: '"$[[ inputs.docker_builder ]]" == "true"'
-      when: always
-    - when: never
+    - *template-rules # на этом этапу лишнее пуш имаджа при merge_request_event. merge_request_event - обычно для провеки кода перед влитием в основную ветку, прогон тестов. Но бывают исключения
+# на мой взгляд лишний переключатель
+    # - if: '"$[[ inputs.docker_builder ]]" == "true"'
+    #   when: always
+    # - when: never
   needs: [ 'docker_builder:build:job' ]
 
 helm_builder:test:config:job:
@@ -101,9 +106,11 @@ helm_builder:test:config:job:
   tags:
     - helm
   rules:
-    - if: '"$[[ inputs.helm_builder ]]" == "true"'
-      when: always
-    - when: never
+    - *template-rules
+# на мой взгляд лишний переключатель, я бы так же завязал на template-rules. тут как раз условие merge_request_event хорошо вписывается
+    # - if: '"$[[ inputs.helm_builder ]]" == "true"'
+    #   when: always
+    # - when: never
 
 helm_builder:test:deploy:job:
   stage: build
@@ -114,8 +121,8 @@ helm_builder:test:deploy:job:
     entrypoint: [ "" ]
   script:
     - |
-      helm install ${CI_PROJECT_NAME}-${CI_PIPELINE_ID} ./chart \
-      -n dev \
+      helm upgrade --install ${CI_PROJECT_NAME}-${CI_PIPELINE_ID} ./chart \                    # helm install Устанавливает новый релиз. Если релиз с таким именем уже существует, команда завершится с ошибкой.
+      -n dev --create-namespace \                                                              # А если нет немспейса dev? лучше автоматизировать с --create-namespace
       -f ./chart/values.yaml \
       --set host=${CI_PROJECT_NAME}-${CI_PIPELINE_ID}.fzen.pro \
       --dry-run=server \
@@ -123,11 +130,14 @@ helm_builder:test:deploy:job:
   tags:
     - helm
   rules:
-    - if: '"$[[ inputs.helm_builder ]]" == "true"'
-      when: always
-    - when: never
+    - *template-rules
+# на мой взгляд лишний переключатель, я бы так же завязал на template-rules
+    # - if: '"$[[ inputs.helm_builder ]]" == "true"'
+    #   when: always
+    # - when: never
 
-helm_builder:build:job:
+#helm_builder:build:job:   # вот тут понял, что очень нечитаемые названия этапов. я бы называл по примеру ниже
+build helm package:
   stage: build
   image:
     name: alpine/helm
@@ -144,9 +154,12 @@ helm_builder:build:job:
   tags:
     - helm
   rules:
-    - if: '"$[[ inputs.helm_builder ]]" == "true"'
-      when: on_success
-    - when: never
+    - *template-rules
+# на мой взгляд лишний переключатель, я бы так же завязал на template-rules
+  # rules:
+  #   - if: '"$[[ inputs.helm_builder ]]" == "true"'
+  #     when: on_success
+  #   - when: never
   needs:
     - 'helm_builder:test:config:job'
     - 'helm_builder:test:deploy:job'
@@ -167,15 +180,18 @@ helm_builder:push:job:
         curl -k --request POST --form "chart=@packages/$package" --user "gitlab-ci-token:$CI_JOB_TOKEN" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/helm/api/${CHANNEL}/charts"
       done
+  # sed не самая хорошая практика использовать. Я бы предложил получить CHART_NAME и CHART_VERSION на предыдущем шаге из Chart.yaml. Yaml хорошо парсится через утилиту "yq", и параметры передал через env
+  # но и через sed тоже пойдет, главное что работает)
   tags:
     - helm
   rules:
     - *template-rules
-    - if: '"$[[ inputs.helm_builder ]]" == "true"'
-      when: always
-    - when: never
+    # - if: '"$[[ inputs.helm_builder ]]" == "true"'
+    #   when: always
+    # - when: never
   needs: [ 'helm_builder:build:job' ]
 
+# а как деплоиться на прод? тут только dev деплой
 helm:deploy:job:
   stage: deploy
   variables:
@@ -208,10 +224,13 @@ helm:deploy:job:
       optional: true
   rules:
     - *template-rules
-    - if: '"$[[ inputs.helm_deploy ]]" == "true"'
-      when: always
-    - when: never
+    # - if: '"$[[ inputs.helm_deploy ]]" == "true"'
+    #   when: always
+    # - when: never
 
+# очень крутая тема, но в команде обычно когда создают мерж реквест и проходят все пайплайны это мерж реквест
+# скидывают на рвевью коллеге. Если тот делает Approve, то мерж реквест можно вливать в основную ветку. А так круто,
+# работа с api гитлаба 
 auto:merge:job:
   stage: deploy
   script:
@@ -244,7 +263,13 @@ auto:merge:job:
     - when: never
 
 
-
+# Очень круто, пайп хорош. Я бы обратил внимание на:
+#  -  Нейминги джоб, чтобы было читаемо.
+#  -  Оправдано ли использование kaniko и crane?
+#  -  Все что не касается разработки приложения (хельм например), обычно выносится в другие репозитории. Часто так: репозиторий с хельм чартами и репозиторий с хельм вэльюсами. Они там собираются, пушатся.
+#  -  Переклоючатели вроде  inputs.helm_deploy - никогда не пользовался. Должно быть обосновано их использование.
+#  -  Нет деплоя в прод.
+#  -  Можно добавить линт докер файла
 
 
 

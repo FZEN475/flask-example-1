@@ -62,3 +62,4 @@ tls:
   createCerts: true
 #  secret: ""
 
+# Помимо основного файла values.yaml нужно иметь отдельные файлы для values.dev и values.prod. У них могут быть разные ингрессы, хосты, энвы.
