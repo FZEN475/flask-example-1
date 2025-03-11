@@ -1,10 +1,12 @@
+# очень правильно выностить в отдельный реджестри все пайпы, чтобы они не лежали в проекте. 
 include:
   - local: 'CI/root.gitlab-ci.yaml'
     inputs:
       merge_branch_action: delete
-      docker_builder: true
-      helm_builder: true
-      helm_deploy: true
+      # не увидел необходимости
+      # docker_builder: true
+      # helm_builder: true
+      # helm_deploy: true
 
 variables:
   CI_DEBUG_TRACE: "true"
