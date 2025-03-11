@@ -1,0 +1,27 @@
+
+{{- if .Values.service.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  {{- include "common.get_dict" (dict "name" "annotations" "vars" (list .Values.service.annotations .Values.global.annotations ) "nindent" 2 ) | nindent 2 }}
+  labels:
+    {{- include "common.standardLabels" . | nindent 4 }}
+    {{- include "common.get_dict" (dict "vars" (list .Values.service.labels .Values.global.labels ) ) | nindent 4 }}
+  {{- include "common.get_str_value" (dict "name" "name" "vars" ( list .Values.service.name ) "default" .Release.Name ) | nindent 2 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- include "common.get_str_value" (dict "name" "type" "vars" (list .Values.service.type) "accept_list" (list "ClusterIP" "LoadBalancer") "default" "ClusterIP" ) | nindent 2 }}
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - port: {{ .Values.port }}
+      protocol: TCP
+      targetPort:  tcp
+      name: tcp
+  selector:
+    {{- include "common.standardSelectorLabels" . | nindent 6 }}
+  sessionAffinity: None
+
+{{- end -}}

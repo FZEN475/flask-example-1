@@ -1,0 +1,33 @@
+{{- if and .Values.tls.enabled .Values.tls.createCerts }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cm-{{ .Release.Name }}-tls
+  namespace: {{ .Release.Namespace }}
+spec:
+  additionalOutputFormats:
+    - type: CombinedPEM
+  dnsNames:
+    - {{ .Values.host }}
+    - {{ printf "%s.%s.%s" ( .Release.Name ) ( .Release.Namespace ) "svc" }}
+  emailAddresses:
+    - admin@fzen.pro
+  ipAddresses:
+  - 127.0.0.1
+  isCA: false
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: root-intermediate0-ci
+  {{- include "common.get_str_value" (dict "name" "secretName" "vars" ( list .Values.tls.secret ) "default" (printf "%s-%s-%s" "cm" ( .Release.Name ) "tls") ) | nindent 2 }}
+  subject:
+    organizations:
+      - cert-manager
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+  - client auth
+
+
+{{- end }}

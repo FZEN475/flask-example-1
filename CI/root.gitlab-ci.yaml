@@ -1,0 +1,256 @@
+spec:
+  inputs:
+    merge_branch_action:
+      options: [ 'skip', 'delete' ]
+      type: string
+      default: 'skip'
+    docker_builder:
+      type: boolean
+      default: false
+    helm_builder:
+      type: boolean
+      default: false
+    helm_deploy:
+      type: boolean
+      default: false
+---
+
+.template-variables: &template-variables
+  variables:
+    NS: prod
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHANNEL: release
+    KUBE_CONTEXT: dev/kubernetes-agent-config:kubernetes-agent-prod
+    IMAGE_TAG: latest
+    INGRESS_CLASS_NAME: external-nginx
+    HOST: "${CI_PROJECT_NAME}.fzen.pro"
+
+.template-rules: &template-rules
+  if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_REF_PROTECTED == "true"
+  <<: *template-variables
+
+workflow:
+  auto_cancel:
+    on_job_failure: all
+
+stages:
+  - build
+  - push
+  - deploy
+
+docker_builder:build:job:
+  stage: build
+  script:
+    - >
+      echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}"
+      > /kaniko/.docker/config.json
+    - cat /kaniko/.docker/config.json
+    - >
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --no-push
+      --skip-tls-verify
+      --tar-path image.tar
+      --cache=true --cache-repo="${CI_REGISTRY_IMAGE}/cache"
+  artifacts:
+    paths:
+      - image.tar
+  tags:
+    - docker-builder
+  rules:
+    - if: '"$[[ inputs.docker_builder ]]" == "true"'
+      when: always
+    - when: never
+
+docker_builder:push:job:
+  stage: push
+  image:
+    name: gcr.io/go-containerregistry/crane:debug
+    entrypoint: [ "" ]
+  variables:
+    IMAGE_TAG: "${CI_COMMIT_BRANCH}"
+  script:
+    - ls -all image.tar
+    - crane auth login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY --insecure
+    - crane push image.tar ${CI_REGISTRY_IMAGE}:$IMAGE_TAG --insecure
+  tags:
+    - docker-builder
+  rules:
+    - *template-rules
+    - if: '"$[[ inputs.docker_builder ]]" == "true"'
+      when: always
+    - when: never
+  needs: [ 'docker_builder:build:job' ]
+
+helm_builder:test:config:job:
+  stage: build
+  variables:
+    KUBE_CONTEXT: dev/kubernetes-agent-config:kubernetes-agent-dev
+  image:
+    name: alpine/helm
+    entrypoint: [ "" ]
+  script:
+    - helm dependency build ./chart/ --debug
+    - helm template ./chart/ --debug > config.yaml
+    - helm lint ./chart/
+    - helm lint ./chart/charts/*/ || true
+  artifacts:
+    paths:
+      - config.yaml
+  tags:
+    - helm
+  rules:
+    - if: '"$[[ inputs.helm_builder ]]" == "true"'
+      when: always
+    - when: never
+
+helm_builder:test:deploy:job:
+  stage: build
+  variables:
+    KUBE_CONTEXT: dev/kubernetes-agent-config:kubernetes-agent-dev
+  image:
+    name: alpine/helm
+    entrypoint: [ "" ]
+  script:
+    - |
+      helm install ${CI_PROJECT_NAME}-${CI_PIPELINE_ID} ./chart \
+      -n dev \
+      -f ./chart/values.yaml \
+      --set host=${CI_PROJECT_NAME}-${CI_PIPELINE_ID}.fzen.pro \
+      --dry-run=server \
+      --wait --kubeconfig=$KUBECONFIG --kube-context=$KUBE_CONTEXT
+  tags:
+    - helm
+  rules:
+    - if: '"$[[ inputs.helm_builder ]]" == "true"'
+      when: always
+    - when: never
+
+helm_builder:build:job:
+  stage: build
+  image:
+    name: alpine/helm
+    entrypoint: [ "" ]
+  script:
+    - find ./chart -type f -regex '.*\(Chart.ya\?ml\|requirements.ya\?ml\)' -exec sh -c 'helm dependency build $(dirname "{}") ' \;
+    - rm -rf ./packages && mkdir -p ./packages
+    - |
+      echo "[PACKAGING CHART $chart]"
+      helm package ./chart -d ./packages
+  artifacts:
+    paths:
+      - packages
+  tags:
+    - helm
+  rules:
+    - if: '"$[[ inputs.helm_builder ]]" == "true"'
+      when: on_success
+    - when: never
+  needs:
+    - 'helm_builder:test:config:job'
+    - 'helm_builder:test:deploy:job'
+
+helm_builder:push:job:
+  stage: push
+  variables:
+    CHANNEL: "${CI_COMMIT_BRANCH}"
+  image:
+    name: alpine/helm
+    entrypoint: [ "" ]
+  script:
+    - |
+      find ./packages -mindepth 1 -maxdepth 1 -type f -name '*.tgz' -exec sh -c 'basename "$0"' '{}' \; | while read package; do
+        CHART_NAME=$(echo $package | sed -e 's/-[0-9]\.[0-9]\.[0-9]\.tgz$//g')
+        CHART_VERSION=$(echo $package | sed -e 's/^[a-zA-Z-].*-//g' | sed -e 's/.tgz$//g')
+        echo "$package"
+        curl -k --request POST --form "chart=@packages/$package" --user "gitlab-ci-token:$CI_JOB_TOKEN" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/helm/api/${CHANNEL}/charts"
+      done
+  tags:
+    - helm
+  rules:
+    - *template-rules
+    - if: '"$[[ inputs.helm_builder ]]" == "true"'
+      when: always
+    - when: never
+  needs: [ 'helm_builder:build:job' ]
+
+helm:deploy:job:
+  stage: deploy
+  variables:
+    NS: dev
+    RELEASE_NAME: "${CI_COMMIT_BRANCH}-${CI_PROJECT_NAME}"
+    CHANNEL: "${CI_COMMIT_BRANCH}"
+    KUBE_CONTEXT: dev/kubernetes-agent-config:kubernetes-agent-dev
+    IMAGE_TAG: "${CI_COMMIT_BRANCH}"
+    INGRESS_CLASS_NAME: internal-nginx
+    HOST: "${CI_COMMIT_BRANCH}.${CI_PROJECT_NAME}.fzen.pro"
+  script:
+    - |
+      helm repo add $CI_PROJECT_NAME "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/helm/${CHANNEL}" \
+      --username=$CI_REGISTRY_USER --password=$CI_REGISTRY_PASSWORD \
+      --kubeconfig=$KUBECONFIG --kube-context=$KUBE_CONTEXT
+    - |
+      helm repo update && helm search repo $CI_PROJECT_NAME
+    - |
+      helm upgrade $RELEASE_NAME $CI_PROJECT_NAME/$CI_PROJECT_NAME --force --install --reset-then-reuse-values --debug -n $NS \
+      --set image=registry.fzen.pro/dev/flask-example-1:$IMAGE_TAG \
+      --set ingress.ingressClassName=$INGRESS_CLASS_NAME \
+      --set host=$HOST \
+      --kubeconfig=$KUBECONFIG --kube-context=$KUBE_CONTEXT
+  tags:
+    - helm
+  needs:
+    - job: helm_builder:push:job
+      optional: true
+    - job: docker_builder:push:job
+      optional: true
+  rules:
+    - *template-rules
+    - if: '"$[[ inputs.helm_deploy ]]" == "true"'
+      when: always
+    - when: never
+
+auto:merge:job:
+  stage: deploy
+  script:
+    - |
+      remove_branch=false
+      if [[ "$[[ inputs.merge_branch_action | expand_vars ]]" == "delete" ]]; then
+        remove_branch=true
+      fi
+    - 'opened_merge_requests=$(curl -k -H "Authorization: Bearer $PROJECT_TOKEN" $CI_API_V4_URL/projects/"$CI_PROJECT_ID"/merge_requests?state=opened)'
+    - |
+      for iid in $(echo "$opened_merge_requests" | jq '.[] | .iid'); do
+        curl -k --fail -X PUT -H "Authorization: Bearer $PROJECT_TOKEN" \
+          -d skip_ci=true \
+          $CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$iid/rebase      
+        curl -k -X POST -H "Authorization: Bearer $PROJECT_TOKEN" \
+          $CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$iid/approve
+        curl -k -X PUT -H "Authorization: Bearer $PROJECT_TOKEN" \
+          -d merge_when_pipeline_succeeds=true \
+          -d should_remove_source_branch=$remove_branch \
+          -d squash_commit_message="$CI_COMMIT_MESSAGE" \
+          -d squash=true \
+          $CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$iid/merge 
+      done
+  needs:
+    - job: helm:deploy:job
+      optional: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
+    - when: never
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: flask-example-1
+version: 1.0.0
+description: flask-example-1
+type: application
+maintainers:
+  - name: FZEN
+    email: admin@fzen.pro
+    url: https://fzen.pro
+appVersion: 1.0.0

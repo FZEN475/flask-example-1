@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ .Release.Name }}"
+  namespace: "{{ .Release.Namespace }}"
+  labels:
+    {{- include "common.standardLabels" . | nindent 4 }}
+    {{- include "common.get_dict" (dict "vars" (list .Values.labels .Values.global.labels ) ) | nindent 4 }}
+  {{- include "common.get_dict" (dict "name" "annotations" "vars" (list .Values.annotations .Values.global.annotations ) "nindent" 2 ) | nindent 2 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "common.standardSelectorLabels" . | nindent 6 }}
+  {{ include "common.get_int_value" (dict "name" "replicas" "vars" (list .Values.global.replicas) "default" "1" ) | nindent 2 }}
+  template:
+    metadata:
+      labels:
+        {{- include "common.standardLabels" . | nindent 8 }}
+    spec:
+      {{ include "common.podSecurityContext" (dict "vars" (list .Values.global.securityContext ) "coalesce" true ) | nindent 6 }}
+      {{- include "common.get_dict" (dict "name" "affinity" "vars" (list .Values.global.affinity ) "coalesce" true "nindent" 2 ) | nindent 6 }}
+      {{- include "common.get_dict" (dict "name" "nodeSelector" "vars" (list .Values.global.nodeSelector ) "coalesce" true "nindent" 2 ) | nindent 6 }}
+      {{- include "common.get_dict" (dict "name" "tolerations" "vars" (list .Values.global.tolerations ) "coalesce" true "nindent" 2 ) | nindent 6 }}
+      containers:
+        - name: "{{ .Release.Name }}"
+          {{ include "common.get_str_value" (dict "name" "image" "vars" (list .Values.image )) | nindent 10 }}
+          {{ include "common.get_str_value" (dict "name" "imagePullPolicy" "vars" (list .Values.imagePullPolicy ) "accept_list" (list "IfNotPresent" "Always" "Never") "default" "IfNotPresent") | nindent 10 }}
+          {{ include "common.get_dict" (dict "name" "env" "vars" (list .Values.env ) "coalesce" false "env_stile" true "nindent" 2 ) | nindent 10 }}
+          {{ include "common.containerSecurityContext" (dict "vars" (list .Values.containerSecurityContext ) "coalesce" true ) | nindent 10 }}
+          {{ include "common.get_lists" (dict "name" "args" "vars" (list .Values.extraArgs )  ) | nindent 10 }}
+          {{ include "common.get_lists" (dict "name" "command" "vars" (list .Values.extraCommands )  ) | nindent 10 }}
+          ports:
+            - containerPort: {{ .Values.port }}
+              name: tcp
+              protocol: TCP
+          volumeMounts:
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /tmp/tls
+              readOnly: true
+            {{- end -}}
+            {{ include "common.get_lists" (dict "vars" (list .Values.extraVolumeMounts )  ) | nindent 12 }}
+      {{ include "common.get_lists" (dict "name" "imagePullSecrets" "vars" (list .Values.global.imagePullSecrets )  ) | nindent 6 }}
+      volumes:
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            defaultMode: 440
+            {{- include "common.get_str_value" (dict "name" "secretName" "vars" ( list .Values.tls.secret ) "default" (printf "%s-%s-%s" "cm" ( .Release.Name ) "tls") ) | nindent 12 }}
+        {{- end -}}
+        {{ include "common.get_lists" (dict "vars" (list .Values.global.extraVolumes )  ) | nindent 6 }}
+

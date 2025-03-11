@@ -1,0 +1,64 @@
+global:
+  labels: {}
+  annotations: {}
+  replicas: 1
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    runAsNonRoot: true
+    fsGroup: 1000
+  affinity: {}
+  nodeSelector: {}
+  tolerations: {}
+  extraVolumes: []
+  imagePullSecrets:
+    - name: flask-example-1-registry-secrets
+
+labels: {}
+annotations: {}
+image: "registry.fzen.pro/dev/flask-example-1:lateat"
+imagePullPolicy: "Always"
+
+env: []
+#  - name: TZ
+#    value: UTC
+containerSecurityContext:
+  capabilities:
+    drop:
+      - ALL
+
+extraArgs: []
+
+extraCommands: []
+#  - tail
+#  - -f
+#  - /dev/null
+
+port: 8080
+
+extraVolumeMounts: []
+
+service:
+  enabled: true
+  annotations: {}
+  labels: {}
+  type: ClusterIP
+#  name:
+#  serviceIP:
+
+ingress:
+  enabled: true
+  labels: {}
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+  ingressClassName: ""
+  path: "/"
+
+
+host: "flask-example-1.fzen.pro"
+
+tls:
+  enabled: true
+  createCerts: true
+#  secret: ""
+

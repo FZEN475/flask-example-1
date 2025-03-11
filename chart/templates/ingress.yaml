@@ -1,0 +1,31 @@
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  labels:
+    {{- include "common.standardLabels" . | nindent 4 }}
+    {{- include "common.get_dict" (dict "vars" (list .Values.ingress.labels .Values.global.labels ) ) | nindent 4 }}
+  {{- include "common.get_dict" (dict "name" "annotations" "vars" (list .Values.ingress.annotations) "nindent" 2 ) | nindent 2 }}
+  name: "{{ .Release.Name }}"
+  namespace: "{{ .Release.Namespace }}"
+spec:
+  {{- include "common.get_str_value" (dict "name" "ingressClassName" "vars" (list .Values.ingress.ingressClassName) ) | nindent 2 }}
+  rules:
+  - host: {{ .Values.host }}
+    http:
+      paths:
+      - backend:
+          service:
+            {{- include "common.get_str_value" (dict "name" "name" "vars" ( list .Values.service.name ) "default" .Release.Name ) | nindent 12 }}
+            port:
+              number: {{ .Values.port }}
+        path: {{ default ("/") (index .Values.service "path") }}
+        pathType: {{ default ("Prefix") (index .Values.service "pathType") }}
+{{- if .Values.tls.enabled }}
+  tls:
+  - hosts:
+    - {{ .Values.host }}
+    {{- include "common.get_str_value" (dict "name" "secretName" "vars" ( list .Values.tls.secret ) "default" (printf "%s-%s-%s" "cm" ( .Release.Name ) "tls") ) | nindent 2 }}
+{{- end -}}
+{{- end -}}
